@@ -64,16 +64,25 @@ if ($event == 'diag') {
 
     $step = ($step) ? $step : gps('step');
 
+    $dets = array(
+        'low'    => gTxt('low'),
+        'high'   => gTxt('high'),
+        'tables' => gTxt('tables'),
+    );
+
     $available_steps = array(
         'low'     => true,
         'high'    => true,
         'phpinfo' => true,
+        'tables'  => true,
     );
 
     if ($step && bouncer($step, $available_steps)) {
         if ($step === 'phpinfo') {
             phpinfo();
             exit;
+        } elseif ($step === 'tables') {
+            showTables();
         } else {
             doDiagnostics();
         }
@@ -179,7 +188,7 @@ function diag_msg_wrap($msg, $type = 'e')
 
 function doDiagnostics()
 {
-    global $prefs, $files, $txpcfg, $event, $step, $theme, $DB, $txp_is_dev;
+    global $prefs, $files, $txpcfg, $event, $step, $theme, $DB, $txp_is_dev, $dets;
     extract(get_prefs());
 
     $urlparts = parse_url(hu);
@@ -554,11 +563,6 @@ function doDiagnostics()
     $fmt_date = '%Y-%m-%d %H:%M:%S';
     $updateTime = ($dbupdatetime) ? gmstrftime($fmt_date, $dbupdatetime).'/' : '';
 
-    $dets = array(
-        'low'  => gTxt('low'),
-        'high' => gTxt('high'),
-    );
-
     $out = array(
         form(
             eInput('diag').
@@ -772,6 +776,139 @@ function doDiagnostics()
         n.tag_end('div'). // End of #diagnostics.
         n.tag_end('div'). // End of .txp-layout-1col.
         n.'</div>'; // End of .txp-layout.;
+}
+
+/**
+ * Show table data and permit repair/optimize via MySQL.
+ */
+
+function showTables()
+{
+    global $event, $step, $DB, $dets;
+
+    $tablelist = getThings("SHOW TABLES");
+    $message = '';
+
+    if (($tbl = gps("opt_table"))) {
+        if (in_array($tbl, $tablelist)) {
+            if (safe_optimize(doSlash($tbl))) {
+                $message = gTxt('table_optimized', array('{table}' => txpspecialchars($tbl)));
+            }
+        }
+    } elseif (($tbl = gps("rep_table"))) {
+        if (in_array($tbl, $tablelist)) {
+            if (safe_repair(doSlash($tbl))) {
+                $message = gTxt('table_repaired', array('{table}' => txpspecialchars($tbl)));
+            }
+        }
+    } elseif (($val = gps("rep_all"))) {
+        if ($val) {
+            if (safe_query('REPAIR TABLE '.implode(',', doSlash($tablelist)))) {
+                $message = gTxt('tables_repaired');
+            }
+        }
+    }
+
+    $tableStats = getRows("SHOW TABLE STATUS");
+
+    $heading = gTxt('tab_diagnostics');
+    echo pagetop(gTxt('tab_diagnostics'), $message);
+
+    echo n.'<div class="txp-layout">'.
+        n.tag(
+            hed($heading, 1, array('class' => 'txp-heading')),
+            'div', array('class' => 'txp-layout-1col')
+        ).
+        n.tag_start('div', array(
+            'class' => 'txp-layout-1col txp-listtables',
+            'id'    => $event.'_container',
+        ));
+
+    echo form(
+        eInput('diag').
+        inputLabel(
+            'diag_detail_level',
+            selectInput('step', $dets, $step, 0, 1, 'diag_detail_level'),
+            'detail',
+            '',
+            array('class' => 'txp-form-field diagnostic-details-level'),
+            ''
+        )
+    );
+
+    echo startTable('dbinfo', '', 'txp-list') .
+        tr(
+            hcell(gTxt('table_head_num')) .
+            hcell(gTxt('table_head_table')) .
+            hcell(gTxt('table_head_records')) .
+            hcell(gTxt('table_head_use_data')) .
+            hcell(gTxt('table_head_use_index')) .
+            hcell(gTxt('table_head_use_total')) .
+            hcell(gTxt('table_head_use_overhead')) .
+            hcell(gTxt('table_head_error_number')) .
+            hcell(gTxt('table_head_actions'))
+        );
+
+    $tbl_num = 0;
+    $row_usage = 0;
+    $data_usage = 0;
+    $index_usage = 0;
+    $overhead_usage = 0;
+
+    foreach ($tableStats as $tableStatus) {
+        extract($tableStatus);
+        $safe_name = txpspecialchars($Name);
+
+        $q = "SHOW KEYS FROM `" . doSlash($Name) . "`";
+        safe_query($q);
+        $mysqlErrno = mysqli_errno($DB->link);
+
+        $color = ($mysqlErrno != 0) ? ' style="color:#D10000;"' : ' style="color:#4B9F00;"';
+        $color2 = ($Data_free > 0) ? ' style="color:#D10000;"' : ' style="color:#4B9F00;"';
+        $tbl_num++;
+        $row_usage+= $Rows;
+        $data_usage+= $Data_length;
+        $index_usage+= $Index_length;
+        $overhead_usage+= $Data_free;
+
+        echo tr(
+            td($tbl_num) .
+            td($safe_name) .
+            td(" " . $Rows) .
+            td(prettyFileSize($Data_length)) .
+            td(prettyFileSize($Index_length)) .
+            td(prettyFileSize($Data_length + $Index_length)) .
+            tda(prettyFileSize($Data_free), $color2) .
+            tda(" " . $mysqlErrno, $color) .
+            td(($Engine === 'MyISAM' ? href(gTxt('table_repair'), "?event=diag&amp;step=tables&amp;rep_table=" . $safe_name."&amp;_txp_token=".form_token()) .n : '').
+                href(gTxt('table_optimize'), "?event=diag&amp;step=tables&amp;opt_table=" . $safe_name."&amp;_txp_token=".form_token())));
+    }
+
+    echo tr(
+        hcell("Total") .
+        hcell($tbl_num . " Tables") .
+        hcell(number_format($row_usage)) .
+        hcell(prettyFileSize($data_usage)) .
+        hcell(prettyFileSize($index_usage)) .
+        hcell(prettyFileSize($data_usage + $index_usage)) .
+        hcell(prettyFileSize($overhead_usage)) .
+        hcell() .
+        tda(($Engine === 'MyISAM' ? href(strong(gTxt('table_repair_all')), "?event=diag&amp;step=tables&amp;rep_all=1&amp;_txp_token=".form_token()) : ''), ' style="text-align:center;"'));
+
+    echo endTable() .
+        tag_end('div').tag_end('div').tag_end('div');
+}
+
+/**
+ * Prettify byte counts.
+ *
+ * @param  number $bytes Number of bytes to format in KB, MB, etc
+ * @return number
+ */
+
+function prettyFileSize($bytes)
+{
+    return format_filesize($bytes, ($bytes == 0 ? 0 : 2));
 }
 
 /**
