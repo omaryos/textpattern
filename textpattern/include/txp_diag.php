@@ -885,8 +885,8 @@ function showTables()
     }
 
     echo tr(
-        hcell("Total") .
-        hcell($tbl_num . " Tables") .
+        hcell(gTxt('total')) .
+        hcell(gTxt('table_head_qty', array('{qty}' => $tbl_num))) .
         hcell(number_format($row_usage)) .
         hcell(prettyFileSize($data_usage)) .
         hcell(prettyFileSize($index_usage)) .
