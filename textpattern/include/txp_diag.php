@@ -840,6 +840,7 @@ function showTables()
         tr(
             hcell(gTxt('table_head_num')) .
             hcell(gTxt('table_head_table')) .
+            hcell(gTxt('table_head_fields')) .
             hcell(gTxt('table_head_records')) .
             hcell(gTxt('table_head_use_data')) .
             hcell(gTxt('table_head_use_index')) .
@@ -851,42 +852,89 @@ function showTables()
 
     $tbl_num = 0;
     $row_usage = 0;
+    $col_usage = 0;
     $data_usage = 0;
     $index_usage = 0;
     $overhead_usage = 0;
+    $columns = array();
 
     foreach ($tableStats as $tableStatus) {
         extract($tableStatus);
-        $safe_name = txpspecialchars($Name);
+        $escaped_name = txpspecialchars($Name);
+        $safe_name = doSlash($Name);
+        isset($columns[$escaped_name]) or $columns[$escaped_name]['total'] = 0;
 
-        $q = "SHOW KEYS FROM `" . doSlash($Name) . "`";
+        $q = "SHOW KEYS FROM ".safe_pfx($safe_name);
         safe_query($q);
         $mysqlErrno = mysqli_errno($DB->link);
 
         $color = ($mysqlErrno != 0) ? array('class' => 'error') : array('class' => 'success');
         $color2 = ($Data_free > 0) ? array('class' => 'error') : array('class' => 'success');
+        $color3 = array('class' => 'success');
+
+        $pathToCheck = txpath.'/vendors/Textpattern/DB/Tables/'.$escaped_name.'.table';
+
+        if (is_readable($pathToCheck)) {
+            $expectedDef = file($pathToCheck);
+
+            $q = "SELECT COLUMN_NAME AS Field, LOWER(DATA_TYPE) as Type, CHARACTER_MAXIMUM_LENGTH
+                FROM information_schema.columns
+                WHERE table_schema = '".$DB->db."' AND table_name = '".safe_pfx($safe_name)."'";
+
+            $tableDef = array_column(getRows($q), 'Type', 'Field');
+
+            foreach ($expectedDef as $row) {
+                $row = trim($row);
+
+                // End of definition area (indexes etc follow).
+                if (empty($row)) {
+                    break;
+                }
+
+                $columns[$escaped_name]['total']++;
+
+                // $parts[0] = field name, $parts[1] = type.
+                $parts = explode(' ', preg_replace(array('!\s+!', '!,!'), ' ', $row));
+
+                // Skip field size check.
+                $parts[1] = strtolower((($pos = strpos($parts[1], '(')) !== false) ? substr($parts[1], 0, $pos) : $parts[1]);
+
+                $field_ok =
+                    array_key_exists($parts[0], $tableDef) &&
+                    $tableDef[$parts[0]] === $parts[1];
+
+                if (!$field_ok) {
+                    $columns[$escaped_name]['error'][$parts[0]] = $parts[1];
+                    $color3 = array('class' => 'error');
+                }
+            }
+        }
+
         $tbl_num++;
-        $row_usage+= $Rows;
-        $data_usage+= $Data_length;
-        $index_usage+= $Index_length;
-        $overhead_usage+= $Data_free;
+        $row_usage += $Rows;
+        $col_usage += (isset($columns[$escaped_name]) ? $columns[$escaped_name]['total'] : 0);
+        $data_usage += $Data_length;
+        $index_usage += $Index_length;
+        $overhead_usage += $Data_free;
 
         echo tr(
             td($tbl_num) .
-            td($safe_name) .
-            td(" " . $Rows) .
+            td($escaped_name) .
+            tda(($columns[$escaped_name]['total'] === 0 ? '-' : $columns[$escaped_name]['total']).(isset($columns[$escaped_name]['error']) ? ' / '.count($columns[$escaped_name]['error']).' ('.implode(', ', array_keys($columns[$escaped_name]['error'])).')' : ''), $color3).
+            td($Rows) .
             td(prettyFileSize($Data_length)) .
             td(prettyFileSize($Index_length)) .
             td(prettyFileSize($Data_length + $Index_length)) .
             tda(prettyFileSize($Data_free), $color2) .
-            tda(" " . $mysqlErrno, $color) .
-            td(($Engine === 'MyISAM' ? href(gTxt('table_repair'), "?event=diag&amp;step=tables&amp;rep_table=" . $safe_name."&amp;_txp_token=".form_token()) .n : '').
-                href(gTxt('table_optimize'), "?event=diag&amp;step=tables&amp;opt_table=" . $safe_name."&amp;_txp_token=".form_token())));
+            tda($mysqlErrno, $color) .
+            td(($Engine === 'MyISAM' ? href(gTxt('table_repair'), "?event=diag&amp;step=tables&amp;rep_table=" . $escaped_name."&amp;_txp_token=".form_token()) .n : '').
+                href(gTxt('table_optimize'), "?event=diag&amp;step=tables&amp;opt_table=" . $escaped_name."&amp;_txp_token=".form_token())));
     }
 
     echo tr(
         hcell(gTxt('total')) .
         hcell(gTxt('table_head_qty', array('{qty}' => $tbl_num))) .
+        hcell(number_format($col_usage)) .
         hcell(number_format($row_usage)) .
         hcell(prettyFileSize($data_usage)) .
         hcell(prettyFileSize($index_usage)) .
