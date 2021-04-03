@@ -863,8 +863,8 @@ function showTables()
         safe_query($q);
         $mysqlErrno = mysqli_errno($DB->link);
 
-        $color = ($mysqlErrno != 0) ? ' style="color:#D10000;"' : ' style="color:#4B9F00;"';
-        $color2 = ($Data_free > 0) ? ' style="color:#D10000;"' : ' style="color:#4B9F00;"';
+        $color = ($mysqlErrno != 0) ? array('class' => 'error') : array('class' => 'success');
+        $color2 = ($Data_free > 0) ? array('class' => 'error') : array('class' => 'success');
         $tbl_num++;
         $row_usage+= $Rows;
         $data_usage+= $Data_length;
@@ -893,7 +893,7 @@ function showTables()
         hcell(prettyFileSize($data_usage + $index_usage)) .
         hcell(prettyFileSize($overhead_usage)) .
         hcell() .
-        tda(($Engine === 'MyISAM' ? href(strong(gTxt('table_repair_all')), "?event=diag&amp;step=tables&amp;rep_all=1&amp;_txp_token=".form_token()) : ''), ' style="text-align:center;"'));
+        tda(($Engine === 'MyISAM' ? href(strong(gTxt('table_repair_all')), "?event=diag&amp;step=tables&amp;rep_all=1&amp;_txp_token=".form_token()) : '')));
 
     echo endTable() .
         tag_end('div').tag_end('div').tag_end('div');
